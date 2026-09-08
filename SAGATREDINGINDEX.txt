@@ -1,0 +1,741 @@
+/* ============================================
+   SAGA TRADING INSTITUTE - CALCULATOR LOGIC
+   ============================================ */
+
+(function() {
+    'use strict';
+
+    // ============================================
+    // INSTRUMENT CONFIGURATIONS
+    // ============================================
+    const INSTRUMENTS = {
+        forex: {
+            name: 'Forex',
+            label: 'Lots',
+            // For major pairs like EUR/USD: 1 standard lot = 100,000 units
+            // 1 pip = $10 per standard lot
+            pipValue: 10, // USD per standard lot per pip
+            pipSize: 0.0001, // 1 pip in price terms
+            decimals: 5,
+            defaultEntry: 1.08500,
+            defaultSL: 1.08000,
+            defaultTP: 1.09500
+        },
+        gold: {
+            name: 'Gold (XAU/USD)',
+            label: 'Lots',
+            // 1 standard lot = 100 oz; $1 move = $100
+            // 1 pip (0.01) = $1 per lot
+            pipValue: 1,
+            pipSize: 0.01,
+            decimals: 2,
+            defaultEntry: 2042.50,
+            defaultSL: 2035.00,
+            defaultTP: 2060.00
+        },
+        crypto: {
+            name: 'Crypto',
+            label: 'Units',
+            // 1 unit = $1 move = $1
+            pipValue: 1,
+            pipSize: 1,
+            decimals: 2,
+            defaultEntry: 62000,
+            defaultSL: 60000,
+            defaultTP: 66000
+        },
+        indices: {
+            name: 'Indices',
+            label: 'Contracts',
+            // US30-like: 1 contract = $1 per point
+            pipValue: 1,
+            pipSize: 1,
+            decimals: 2,
+            defaultEntry: 38900,
+            defaultSL: 38700,
+            defaultTP: 39300
+        },
+        stocks: {
+            name: 'Stocks',
+            label: 'Shares',
+            pipValue: 1,
+            pipSize: 1,
+            decimals: 2,
+            defaultEntry: 180,
+            defaultSL: 175,
+            defaultTP: 190
+        }
+    };
+
+    // ============================================
+    // STATE
+    // ============================================
+    const state = {
+        direction: 'BUY',
+        instrument: 'forex',
+        journal: []
+    };
+
+    // ============================================
+    // DOM ELEMENTS
+    // ============================================
+    const $ = (id) => document.getElementById(id);
+    const els = {
+        navbar: $('navbar'),
+        hamburger: $('hamburger'),
+        navMenu: $('navMenu'),
+        themeToggle: $('themeToggle'),
+        form: $('calculatorForm'),
+        accountBalance: $('accountBalance'),
+        riskPercent: $('riskPercent'),
+        instrument: $('instrument'),
+        entryPrice: $('entryPrice'),
+        stopLoss: $('stopLoss'),
+        takeProfit: $('takeProfit'),
+        lotSize: $('lotSize'),
+        resetBtn: $('resetBtn'),
+        copyBtn: $('copyBtn'),
+        printBtn: $('printBtn'),
+        saveBtn: $('saveBtn'),
+        clearAllBtn: $('clearAllBtn'),
+        errorMessage: $('errorMessage'),
+        errorText: $('errorText'),
+        toast: $('toast'),
+        // Results
+        summaryDirection: $('summaryDirection'),
+        summaryInstrument: $('summaryInstrument'),
+        riskAmount: $('riskAmount'),
+        potentialProfit: $('potentialProfit'),
+        potentialLoss: $('potentialLoss'),
+        riskReward: $('riskReward'),
+        slDistance: $('slDistance'),
+        tpDistance: $('tpDistance'),
+        positionSize: $('positionSize'),
+        positionSub: $('positionSub'),
+        barRisk: $('barRisk'),
+        barReward: $('barReward'),
+        // Journal
+        journalList: $('journalList'),
+        journalCount: $('journalCount')
+    };
+
+    // ============================================
+    // THEME MANAGEMENT
+    // ============================================
+    function initTheme() {
+        const saved = localStorage.getItem('saga-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', saved);
+        updateThemeIcon(saved);
+    }
+
+    function updateThemeIcon(theme) {
+        const icon = els.themeToggle.querySelector('.theme-icon');
+        icon.textContent = theme === 'dark' ? '🌙' : '☀️';
+    }
+
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('saga-theme', next);
+        updateThemeIcon(next);
+    }
+
+    // ============================================
+    // NAVIGATION
+    // ============================================
+    function initNav() {
+        els.hamburger.addEventListener('click', () => {
+            els.hamburger.classList.toggle('active');
+            els.navMenu.classList.toggle('active');
+        });
+
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', () => {
+                els.hamburger.classList.remove('active');
+                els.navMenu.classList.remove('active');
+                document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+                link.classList.add('active');
+            });
+        });
+
+        // Active section on scroll
+        const sections = document.querySelectorAll('section[id]');
+        window.addEventListener('scroll', () => {
+            const scrollY = window.scrollY + 100;
+            sections.forEach(section => {
+                const top = section.offsetTop;
+                const height = section.offsetHeight;
+                const id = section.getAttribute('id');
+                const link = document.querySelector(`.nav-link[href="#${id}"]`);
+                if (link) {
+                    if (scrollY >= top && scrollY < top + height) {
+                        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+                        link.classList.add('active');
+                    }
+                }
+            });
+        });
+    }
+
+    // ============================================
+    // DIRECTION TOGGLE
+    // ============================================
+    function initDirectionToggle() {
+        document.querySelectorAll('.direction-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.direction-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.direction = btn.dataset.direction;
+                calculate();
+            });
+        });
+    }
+
+    // ============================================
+    // RISK PRESETS
+    // ============================================
+    function initPresets() {
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                els.riskPercent.value = btn.dataset.risk;
+                calculate();
+            });
+        });
+    }
+
+    // ============================================
+    // INPUT CLEAR BUTTONS
+    // ============================================
+    function initClearButtons() {
+        document.querySelectorAll('.input-clear').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = $(btn.dataset.target);
+                if (target) {
+                    target.value = '';
+                    target.focus();
+                    calculate();
+                }
+            });
+        });
+    }
+
+    // ============================================
+    // INSTRUMENT CHANGE
+    // ============================================
+    function initInstrumentChange() {
+        els.instrument.addEventListener('change', () => {
+            state.instrument = els.instrument.value;
+            const inst = INSTRUMENTS[state.instrument];
+            els.entryPrice.value = inst.defaultEntry.toFixed(inst.decimals);
+            els.stopLoss.value = inst.defaultSL.toFixed(inst.decimals);
+            els.takeProfit.value = inst.defaultTP.toFixed(inst.decimals);
+            els.entryPrice.step = getStep(inst.decimals);
+            els.stopLoss.step = getStep(inst.decimals);
+            els.takeProfit.step = getStep(inst.decimals);
+            calculate();
+        });
+    }
+
+    function getStep(decimals) {
+        return decimals > 0 ? (1 / Math.pow(10, decimals)).toString() : '1';
+    }
+
+    // ============================================
+    // VALIDATION
+    // ============================================
+    function validate() {
+        const balance = parseFloat(els.accountBalance.value);
+        const risk = parseFloat(els.riskPercent.value);
+        const entry = parseFloat(els.entryPrice.value);
+        const sl = parseFloat(els.stopLoss.value);
+        const tp = parseFloat(els.takeProfit.value);
+
+        if (isNaN(balance) || balance <= 0) {
+            return 'Account balance must be greater than 0.';
+        }
+        if (isNaN(risk) || risk <= 0) {
+            return 'Risk percentage must be greater than 0.';
+        }
+        if (risk > 100) {
+            return 'Risk percentage cannot exceed 100%.';
+        }
+        if (isNaN(entry) || entry <= 0) {
+            return 'Entry price must be a valid positive number.';
+        }
+        if (isNaN(sl)) {
+            return 'Stop Loss price is required.';
+        }
+        if (isNaN(tp)) {
+            return 'Take Profit price is required.';
+        }
+
+        if (state.direction === 'BUY') {
+            if (sl >= entry) {
+                return 'For a BUY trade, Stop Loss must be below Entry Price.';
+            }
+            if (tp <= entry) {
+                return 'For a BUY trade, Take Profit must be above Entry Price.';
+            }
+        } else {
+            if (sl <= entry) {
+                return 'For a SELL trade, Stop Loss must be above Entry Price.';
+            }
+            if (tp >= entry) {
+                return 'For a SELL trade, Take Profit must be below Entry Price.';
+            }
+        }
+
+        return null;
+    }
+
+    function showError(msg) {
+        els.errorText.textContent = msg;
+        els.errorMessage.hidden = false;
+        els.errorMessage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function hideError() {
+        els.errorMessage.hidden = true;
+    }
+
+    // ============================================
+    // CALCULATION ENGINE
+    // ============================================
+    function calculate() {
+        hideError();
+        const error = validate();
+        if (error) {
+            showError(error);
+            return;
+        }
+
+        const balance = parseFloat(els.accountBalance.value);
+        const riskPct = parseFloat(els.riskPercent.value);
+        const entry = parseFloat(els.entryPrice.value);
+        const sl = parseFloat(els.stopLoss.value);
+        const tp = parseFloat(els.takeProfit.value);
+        const inst = INSTRUMENTS[state.instrument];
+
+        // Risk amount in account currency
+        const riskAmount = balance * (riskPct / 100);
+
+        // Distance calculations (always positive)
+        const slDistance = Math.abs(entry - sl);
+        const tpDistance = Math.abs(tp - entry);
+
+        // Convert price distance to pips/points
+        const slPips = slDistance / inst.pipSize;
+        const tpPips = tpDistance / inst.pipSize;
+
+        // Risk-to-Reward Ratio
+        const rrRatio = slDistance > 0 ? tpDistance / slDistance : 0;
+
+        // Position size calculation
+        // Risk Amount = Position Size × SL Distance (in price) × pipValue per unit
+        // For forex: pipValue is per standard lot per pip
+        // Position Size (lots) = Risk Amount / (SL pips × pipValue per lot)
+        let positionSize = 0;
+        if (slDistance > 0) {
+            if (state.instrument === 'forex') {
+                positionSize = riskAmount / (slPips * inst.pipValue);
+            } else {
+                // For other instruments: pipValue is per unit/lot per point
+                positionSize = riskAmount / (slDistance * inst.pipValue);
+            }
+        }
+
+        // If user provided manual lot size, use it instead for P/L
+        const manualLot = parseFloat(els.lotSize.value);
+        const useLot = !isNaN(manualLot) && manualLot > 0 ? manualLot : positionSize;
+
+        // Potential P/L
+        let potentialProfit, potentialLoss;
+        if (state.instrument === 'forex') {
+            potentialLoss = slPips * useLot * inst.pipValue;
+            potentialProfit = tpPips * useLot * inst.pipValue;
+        } else {
+            potentialLoss = slDistance * useLot * inst.pipValue;
+            potentialProfit = tpDistance * useLot * inst.pipValue;
+        }
+
+        // Update UI
+        updateResults({
+            riskAmount,
+            potentialProfit,
+            potentialLoss,
+            rrRatio,
+            slPips,
+            tpPips,
+            positionSize,
+            useLot,
+            manualLotUsed: !isNaN(manualLot) && manualLot > 0,
+            riskPct
+        });
+    }
+
+    // ============================================
+    // UPDATE RESULTS UI
+    // ============================================
+    function updateResults(data) {
+        // Direction badge
+        els.summaryDirection.textContent = state.direction;
+        els.summaryDirection.className = 'summary-direction ' + state.direction.toLowerCase();
+
+        // Instrument
+        els.summaryInstrument.textContent = INSTRUMENTS[state.instrument].name;
+
+        // Animate numbers
+        animateValue(els.riskAmount, '$' + formatMoney(data.riskAmount));
+        animateValue(els.potentialProfit, '+$' + formatMoney(data.potentialProfit));
+        animateValue(els.potentialLoss, '-$' + formatMoney(data.potentialLoss));
+        els.riskReward.textContent = '1 : ' + data.rrRatio.toFixed(2);
+
+        // Distances
+        const inst = INSTRUMENTS[state.instrument];
+        const unitLabel = state.instrument === 'forex' ? 'pips' :
+                         state.instrument === 'gold' ? 'points' :
+                         state.instrument === 'crypto' ? '$' :
+                         state.instrument === 'indices' ? 'pts' : 'shares';
+
+        if (state.instrument === 'crypto') {
+            els.slDistance.textContent = '$' + formatNumber(data.slPips, 0);
+            els.tpDistance.textContent = '$' + formatNumber(data.tpPips, 0);
+        } else {
+            els.slDistance.textContent = formatNumber(data.slPips, 2) + ' ' + unitLabel;
+            els.tpDistance.textContent = formatNumber(data.tpPips, 2) + ' ' + unitLabel;
+        }
+
+        // Position size
+        const label = inst.label;
+        if (data.manualLotUsed) {
+            els.positionSize.textContent = formatNumber(data.useLot, 2) + ' ' + label + ' (manual)';
+            els.positionSub.textContent = `Based on your input. Risk: $${formatMoney(data.potentialLoss)} (${((data.potentialLoss / parseFloat(els.accountBalance.value)) * 100).toFixed(2)}%)`;
+        } else {
+            els.positionSize.textContent = formatNumber(data.positionSize, 2) + ' ' + label;
+            els.positionSub.textContent = `Based on ${data.riskPct}% risk`;
+        }
+
+        // Visual bar
+        const total = data.potentialLoss + data.potentialProfit;
+        if (total > 0) {
+            const riskPct = (data.potentialLoss / total) * 100;
+            const rewardPct = (data.potentialProfit / total) * 100;
+            els.barRisk.style.width = riskPct + '%';
+            els.barReward.style.width = rewardPct + '%';
+        }
+    }
+
+    // ============================================
+    // NUMBER ANIMATION
+    // ============================================
+    function animateValue(el, newValue) {
+        el.style.transform = 'translateY(-4px)';
+        el.style.opacity = '0.5';
+        setTimeout(() => {
+            el.textContent = newValue;
+            el.style.transform = 'translateY(0)';
+            el.style.opacity = '1';
+        }, 100);
+    }
+
+    // ============================================
+    // FORMATTING
+    // ============================================
+    function formatMoney(n) {
+        return Number(n).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    function formatNumber(n, decimals) {
+        return Number(n).toLocaleString('en-US', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+    }
+
+    // ============================================
+    // RESET
+    // ============================================
+    function resetCalculator() {
+        els.accountBalance.value = 10000;
+        els.riskPercent.value = 1;
+        els.instrument.value = 'forex';
+        state.instrument = 'forex';
+        state.direction = 'BUY';
+
+        document.querySelectorAll('.direction-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.direction-btn[data-direction="BUY"]').classList.add('active');
+
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.preset-btn[data-risk="1"]').classList.add('active');
+
+        const inst = INSTRUMENTS.forex;
+        els.entryPrice.value = inst.defaultEntry.toFixed(inst.decimals);
+        els.stopLoss.value = inst.defaultSL.toFixed(inst.decimals);
+        els.takeProfit.value = inst.defaultTP.toFixed(inst.decimals);
+        els.lotSize.value = '';
+
+        hideError();
+        calculate();
+        showToast('Calculator reset', 'success');
+    }
+
+    // ============================================
+    // JOURNAL (LocalStorage)
+    // ============================================
+    function loadJournal() {
+        try {
+            const saved = localStorage.getItem('saga-journal');
+            state.journal = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            state.journal = [];
+        }
+        renderJournal();
+    }
+
+    function saveJournal() {
+        localStorage.setItem('saga-journal', JSON.stringify(state.journal));
+    }
+
+    function saveCurrentTrade() {
+        const error = validate();
+        if (error) {
+            showError(error);
+            return;
+        }
+
+        const balance = parseFloat(els.accountBalance.value);
+        const riskPct = parseFloat(els.riskPercent.value);
+        const entry = parseFloat(els.entryPrice.value);
+        const sl = parseFloat(els.stopLoss.value);
+        const tp = parseFloat(els.takeProfit.value);
+        const inst = INSTRUMENTS[state.instrument];
+
+        const riskAmount = balance * (riskPct / 100);
+        const slDistance = Math.abs(entry - sl);
+        const tpDistance = Math.abs(tp - entry);
+        const rrRatio = slDistance > 0 ? tpDistance / slDistance : 0;
+
+        let positionSize = 0;
+        if (slDistance > 0) {
+            if (state.instrument === 'forex') {
+                const slPips = slDistance / inst.pipSize;
+                positionSize = riskAmount / (slPips * inst.pipValue);
+            } else {
+                positionSize = riskAmount / (slDistance * inst.pipValue);
+            }
+        }
+
+        const trade = {
+            id: Date.now(),
+            date: new Date().toISOString(),
+            instrument: inst.name,
+            direction: state.direction,
+            entry: entry,
+            stopLoss: sl,
+            takeProfit: tp,
+            risk: riskAmount,
+            reward: riskAmount * rrRatio,
+            rrRatio: rrRatio,
+            positionSize: positionSize,
+            riskPct: riskPct,
+            balance: balance
+        };
+
+        state.journal.unshift(trade);
+        if (state.journal.length > 20) state.journal = state.journal.slice(0, 20);
+        saveJournal();
+        renderJournal();
+        showToast('Trade saved to journal', 'success');
+    }
+
+    function deleteTrade(id) {
+        state.journal = state.journal.filter(t => t.id !== id);
+        saveJournal();
+        renderJournal();
+    }
+
+    function clearAllJournal() {
+        if (state.journal.length === 0) return;
+        if (confirm('Clear all saved calculations?')) {
+            state.journal = [];
+            saveJournal();
+            renderJournal();
+            showToast('Journal cleared', 'success');
+        }
+    }
+
+    function renderJournal() {
+        els.journalCount.textContent = `${state.journal.length} saved trade${state.journal.length !== 1 ? 's' : ''}`;
+
+        if (state.journal.length === 0) {
+            els.journalList.innerHTML = `
+                <div class="journal-empty">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <p>No saved calculations yet. Calculate a trade and click "Save" to add it here.</p>
+                </div>`;
+            return;
+        }
+
+        els.journalList.innerHTML = state.journal.map(t => {
+            const date = new Date(t.date);
+            const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+                           ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            return `
+                <div class="journal-item">
+                    <div class="journal-direction ${t.direction.toLowerCase()}">${t.direction}</div>
+                    <div class="journal-details">
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">Instrument</span>
+                            <span class="journal-detail-value">${t.instrument}</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">Entry</span>
+                            <span class="journal-detail-value">${t.entry}</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">SL / TP</span>
+                            <span class="journal-detail-value">${t.stopLoss} / ${t.takeProfit}</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">Risk / Reward</span>
+                            <span class="journal-detail-value">$${formatMoney(t.risk)} / $${formatMoney(t.reward)}</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">R:R Ratio</span>
+                            <span class="journal-detail-value">1 : ${t.rrRatio.toFixed(2)}</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">Position</span>
+                            <span class="journal-detail-value">${formatNumber(t.positionSize, 2)}</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">Risk %</span>
+                            <span class="journal-detail-value">${t.riskPct}%</span>
+                        </div>
+                        <div class="journal-detail">
+                            <span class="journal-detail-label">Balance</span>
+                            <span class="journal-detail-value">$${formatMoney(t.balance)}</span>
+                        </div>
+                    </div>
+                    <div class="journal-actions">
+                        <span class="journal-date">${dateStr}</span>
+                        <button class="journal-delete" data-id="${t.id}">Delete</button>
+                    </div>
+                </div>`;
+        }).join('');
+
+        // Bind delete buttons
+        els.journalList.querySelectorAll('.journal-delete').forEach(btn => {
+            btn.addEventListener('click', () => deleteTrade(parseInt(btn.dataset.id)));
+        });
+    }
+
+    // ============================================
+    // COPY / PRINT
+    // ============================================
+    function copyResults() {
+        const text = `
+SAGA TRADING INSTITUTE - Trade Summary
+========================================
+Direction: ${state.direction}
+Instrument: ${INSTRUMENTS[state.instrument].name}
+Entry: ${els.entryPrice.value}
+Stop Loss: ${els.stopLoss.value}
+Take Profit: ${els.takeProfit.value}
+Risk Amount: ${els.riskAmount.textContent}
+Potential Profit: ${els.potentialProfit.textContent}
+Potential Loss: ${els.potentialLoss.textContent}
+Risk/Reward: ${els.riskReward.textContent}
+Position Size: ${els.positionSize.textContent}
+========================================
+        `.trim();
+
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Results copied to clipboard', 'success');
+        }).catch(() => {
+            showToast('Could not copy results', 'error');
+        });
+    }
+
+    function printResults() {
+        window.print();
+    }
+
+    // ============================================
+    // TOAST
+    // ============================================
+    let toastTimeout;
+    function showToast(message, type = 'success') {
+        clearTimeout(toastTimeout);
+        els.toast.textContent = message;
+        els.toast.className = 'toast show ' + type;
+        toastTimeout = setTimeout(() => {
+            els.toast.classList.remove('show');
+        }, 3000);
+    }
+
+    // ============================================
+    // REAL-TIME CALCULATION
+    // ============================================
+    function initRealTimeCalc() {
+        const inputs = [els.accountBalance, els.riskPercent, els.entryPrice,
+                       els.stopLoss, els.takeProfit, els.lotSize];
+        inputs.forEach(input => {
+            input.addEventListener('input', debounce(calculate, 200));
+        });
+    }
+
+    function debounce(fn, delay) {
+        let timer;
+        return function(...args) {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn.apply(this, args), delay);
+        };
+    }
+
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+    function init() {
+        initTheme();
+        initNav();
+        initDirectionToggle();
+        initPresets();
+        initClearButtons();
+        initInstrumentChange();
+        initRealTimeCalc();
+        loadJournal();
+
+        // Event listeners
+        els.themeToggle.addEventListener('click', toggleTheme);
+        els.form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            calculate();
+            showToast('Trade calculated', 'success');
+        });
+        els.resetBtn.addEventListener('click', resetCalculator);
+        els.copyBtn.addEventListener('click', copyResults);
+        els.printBtn.addEventListener('click', printResults);
+        els.saveBtn.addEventListener('click', saveCurrentTrade);
+        els.clearAllBtn.addEventListener('click', clearAllJournal);
+
+        // Initial calculation
+        calculate();
+    }
+
+    // Start
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
